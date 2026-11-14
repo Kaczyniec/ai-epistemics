@@ -1,0 +1,2 @@
+model,n_real,n_null,false_alarm_rate,miss_rate_identifiable,hit_rate_identifiable
+qwen3.6:35b,2,0,,1.0,0.0

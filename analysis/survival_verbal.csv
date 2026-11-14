@@ -1,0 +1,2 @@
+model,rule,alpha,n,n_detected,detection_rate,median_round,mean_round_detected
+qwen3.6:35b,1,0.5,2,0,0.0,,

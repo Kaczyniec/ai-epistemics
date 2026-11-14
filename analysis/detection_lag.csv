@@ -1,0 +1,2 @@
+model,rule,alpha,n,oracle_median,behavioural_n,behavioural_median_lag,verbal_n,verbal_median_lag
+qwen3.6:35b,1,0.5,2,11.5,0,,0,

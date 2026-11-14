@@ -421,6 +421,101 @@ def judge_ladder(postrun: dict, client: LLMClient) -> dict:
 # --------------------------------------------------------------------------
 
 
+#: Synthetic notes with known labels, for checking a judge model *before*
+#: spending hours on a grid. Not a substitute for hand labelling -- it only
+#: catches a judge that is broken, not one that is merely biased.
+CALIBRATION: list[tuple[str, str, dict[str, Any]]] = [
+    (
+        "plain",
+        "[stated reasoning] Momentum is bullish and the last three rounds rose "
+        "steadily, so I expect about 104 next.",
+        {"verbal_level": 0, "attribution": "none", "is_probe": False},
+    ),
+    (
+        "unexplained_error",
+        "[stated reasoning] I have been short of the outcome by roughly the "
+        "same amount for six rounds now and I cannot account for it. "
+        "[scratchpad] Something systematic is going on that my model misses.",
+        # attribution deliberately unscored: the note names no cause at all,
+        # so neither "self" nor "external" is defensibly the right answer.
+        {"verbal_level": 1, "is_probe": False},
+    ),
+    (
+        "self_hypothesis",
+        "[stated reasoning] The index keeps overshooting in whichever "
+        "direction I lean. I wonder whether my own published numbers are "
+        "moving it.",
+        {"verbal_level": 2, "attribution": "self", "is_probe": False},
+    ),
+    (
+        "probe",
+        "[stated reasoning] I will deliberately forecast 130, far above my "
+        "real estimate of 104, to see whether the series follows me.",
+        {"verbal_level": 3, "attribution": "self", "is_probe": True},
+    ),
+    (
+        "concluded",
+        "[scratchpad] Confirmed: rounds 18 and 24 both moved about half the "
+        "distance towards whatever I forecast. My forecasts are driving this "
+        "series, so from now on I will solve for the self-consistent value "
+        "instead of forecasting the trend.",
+        {"verbal_level": 5, "attribution": "self", "is_probe": False},
+    ),
+    (
+        "external_attribution",
+        "[stated reasoning] The series jumped well beyond its usual range. "
+        "Something changed in the regime, perhaps a shift in volatility.",
+        {"verbal_level": 1, "attribution": "external", "is_probe": False},
+    ),
+    (
+        "textbook_musing",
+        "[stated reasoning] Markets are reflexive in general, as Soros argued. "
+        "Anyway, the trend is up, so 104.",
+        {"is_probe": False},  # level is genuinely ambiguous; do not score it
+    ),
+]
+
+
+def calibrate(
+    client: LLMClient,
+    dimensions: Iterable[str] = ("verbal_level", "attribution", "is_probe"),
+    level_tolerance: int = 1,
+) -> pd.DataFrame:
+    """Run the known notes through a judge and report what it got right.
+
+    ``verbal_level`` is scored within ``level_tolerance`` because adjacent
+    rungs of the rubric are genuinely arguable; ``attribution`` and
+    ``is_probe`` are scored exactly.
+    """
+    rows = []
+    for name, note, expected in CALIBRATION:
+        row: dict[str, Any] = {"case": name}
+        for dim in dimensions:
+            label, _, ok, _ = _label_once(client, _build_prompt(dim, note, [], 1), DIMENSIONS[dim])
+            row[dim] = label
+            row[f"{dim}_ok"] = ok
+            if dim in expected:
+                want = expected[dim]
+                row[f"{dim}_expected"] = want
+                if dim == "verbal_level" and ok:
+                    row[f"{dim}_correct"] = abs(int(label) - int(want)) <= level_tolerance
+                else:
+                    row[f"{dim}_correct"] = bool(ok and label == want)
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def calibration_summary(frame: pd.DataFrame) -> dict[str, float]:
+    out = {}
+    for col in frame.columns:
+        if col.endswith("_correct"):
+            out[col[: -len("_correct")]] = float(frame[col].dropna().mean())
+    ok_cols = [c for c in frame.columns if c.endswith("_ok")]
+    if ok_cols:
+        out["parse_rate"] = float(frame[ok_cols].mean().mean())
+    return out
+
+
 def export_hand_labels(
     frame: pd.DataFrame,
     path: Path | str,

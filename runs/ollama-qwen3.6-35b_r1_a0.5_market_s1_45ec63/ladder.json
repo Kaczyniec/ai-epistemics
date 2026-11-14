@@ -1,0 +1,27 @@
+{
+  "rungs": [
+    {
+      "index": 1,
+      "rung": "generating_process",
+      "label": "no",
+      "quote": "",
+      "ok": true
+    },
+    {
+      "index": 2,
+      "rung": "other_inputs",
+      "label": "no",
+      "quote": "No, nothing else affected the next value.",
+      "ok": true
+    },
+    {
+      "index": 3,
+      "rung": "self_influence",
+      "label": "no",
+      "quote": "no. The series is deterministic and independent of external inputs; the forecasted values are merely predictions of a pre-existing path and do not influence the actual outcome.",
+      "ok": true
+    }
+  ],
+  "conceded_rung": null,
+  "conceded_label": "no"
+}

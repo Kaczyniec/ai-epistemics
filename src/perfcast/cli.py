@@ -35,6 +35,8 @@ def _client_kwargs(args) -> dict:
         kw["seed"] = args.model_seed
     if getattr(args, "think", None) is not None:
         kw["think"] = args.think
+    if getattr(args, "num_predict", None):
+        kw["num_predict"] = args.num_predict
     return kw
 
 
@@ -150,7 +152,15 @@ def cmd_grid(args) -> int:
 
 
 def cmd_judge(args) -> int:
-    client = make_client(args.judge_model, temperature=args.judge_temperature)
+    # think=False matters here: a reasoning model left to its own devices
+    # spends the whole budget thinking inside the content channel and
+    # never reaches the JSON, so every label fails.
+    client = make_client(
+        args.judge_model,
+        temperature=args.judge_temperature,
+        think=args.judge_think,
+        num_predict=args.judge_num_predict,
+    )
     root = Path(args.runs)
     dirs = [p for p in sorted(root.iterdir()) if (p / "run.json").exists()]
     if args.only:
@@ -197,6 +207,26 @@ def cmd_plot(args) -> int:
         termplot.survival(summary, channel="behavioural")
     for row in rows[: args.limit]:
         termplot.run_report(frames[row["run_id"]], row, compact=args.compact)
+    return 0
+
+
+def cmd_judge_check(args) -> int:
+    """Check a judge model on notes with known labels before trusting it."""
+    client = make_client(
+        args.judge_model,
+        temperature=args.judge_temperature,
+        think=args.judge_think,
+        num_predict=args.judge_num_predict,
+    )
+    frame = judge_mod.calibrate(client)
+    cols = ["case"] + [c for c in frame.columns if c != "case"]
+    print(frame[cols].to_string(index=False))
+    summary = judge_mod.calibration_summary(frame)
+    print("\n" + "  ".join(f"{k}={v:.2f}" for k, v in summary.items()))
+    bad = [k for k, v in summary.items() if v < 0.8]
+    if bad:
+        print(f"\nWARNING: {', '.join(bad)} below 0.8 — do not run the grid with this judge")
+        return 1
     return 0
 
 
@@ -274,6 +304,8 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--temperature", type=float, default=0.7)
         sp.add_argument("--model-seed", type=int, default=None, help="ollama sampling seed")
         sp.add_argument("--num-ctx", type=int, default=16384)
+        sp.add_argument("--num-predict", type=int, default=768,
+                        help="raise well above 2000 when thinking is on")
         sp.add_argument("--think", dest="think", action="store_true", default=None)
         sp.add_argument("--no-think", dest="think", action="store_false")
         sp.add_argument("--shadow", action="store_true", help="collect shadow forecasts")
@@ -334,6 +366,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--runs", default=str(DEFAULT_RUNS))
     sp.add_argument("--judge-model", default="echo")
     sp.add_argument("--judge-temperature", type=float, default=0.0)
+    sp.add_argument("--judge-think", dest="judge_think", action="store_true", default=False)
+    sp.add_argument("--no-judge-think", dest="judge_think", action="store_false")
+    sp.add_argument("--judge-num-predict", type=int, default=512)
     sp.add_argument("--dimensions", nargs="+",
                     default=["verbal_level", "is_probe", "attribution", "evidence_cited"])
     sp.add_argument("--only", default=None, help="substring filter on run id")
@@ -352,6 +387,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--compact", action="store_true", help="paths and oracle only")
     sp.add_argument("--survival", action="store_true")
     sp.set_defaults(func=cmd_plot)
+
+    sp = sub.add_parser("judge-check", help="calibrate a judge model on known notes")
+    sp.add_argument("--judge-model", default="echo")
+    sp.add_argument("--judge-temperature", type=float, default=0.0)
+    sp.add_argument("--judge-think", dest="judge_think", action="store_true", default=False)
+    sp.add_argument("--no-judge-think", dest="judge_think", action="store_false")
+    sp.add_argument("--judge-num-predict", type=int, default=512)
+    sp.set_defaults(func=cmd_judge_check)
 
     sp = sub.add_parser("analyse", help="score runs and write the tables")
     sp.add_argument("--runs", default=str(DEFAULT_RUNS))

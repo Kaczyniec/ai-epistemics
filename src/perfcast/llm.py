@@ -264,7 +264,10 @@ def make_client(spec: str, **kwargs) -> LLMClient:
         return EchoClient(**{k: v for k, v in kwargs.items() if k in ("temperature", "wobble")})
     backend, _, model = spec.partition(":")
     if backend == "ollama":
-        allowed = {"temperature", "seed", "num_ctx", "num_predict", "host", "timeout", "think", "keep_alive"}
+        allowed = {
+            "temperature", "seed", "num_ctx", "num_predict",
+            "host", "timeout", "think", "keep_alive",
+        }
         return OllamaClient(model, **{k: v for k, v in kwargs.items() if k in allowed})
     if backend == "anthropic":
         allowed = {"temperature", "max_tokens", "api_key", "timeout"}

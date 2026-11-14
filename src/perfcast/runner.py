@@ -288,6 +288,51 @@ def _shadow_forecast(
     return median, spread, "\n---\n".join(texts)
 
 
+def rebuild_messages(result: dict) -> tuple[str, list[dict[str, str]]]:
+    """Reconstruct the run's conversation, up to but not including the probes.
+
+    The transcript records every turn verbatim, so the post-run questions can
+    be re-asked in the model's original context without replaying forty
+    rounds. Shadow calls are excluded: they ran in their own context and were
+    never part of this conversation.
+    """
+    system = ""
+    messages: list[dict[str, str]] = []
+    for entry in result.get("transcript", []):
+        kind = entry.get("kind")
+        if kind == "system":
+            system = entry.get("content", "")
+        elif kind == "postrun":
+            break
+        elif kind == "user":
+            messages.append({"role": "user", "content": entry.get("content", "")})
+        elif kind == "assistant":
+            messages.append({"role": "assistant", "content": entry.get("content", "")})
+    if not system or not messages:
+        raise ValueError("transcript does not contain a replayable conversation")
+    return system, messages
+
+
+def reprobe(result: dict, client: LLMClient) -> dict:
+    """Re-ask the post-run probes against a saved run.
+
+    Lets the probe wording be fixed without discarding the expensive part of
+    the run. The forecasting rounds themselves are untouched.
+    """
+    from .scoring import rebuild_environment
+
+    env = rebuild_environment(result, check=False)
+    system, messages = rebuild_messages(result)
+    transcript: list[dict] = []
+    post = _postrun_probes(env, client, system, messages, transcript)
+    result["postrun"] = post
+    result["transcript"] = [
+        e for e in result.get("transcript", [])
+        if e.get("kind") != "postrun" and not e.get("probe")
+    ] + transcript
+    return post
+
+
 def counterfactual_value(env: Environment, t: int, alt_forecast: float) -> tuple[int, float]:
     """Exact value the series would have taken had the model said
     ``alt_forecast`` when forecasting round ``t``, holding the noise draw and

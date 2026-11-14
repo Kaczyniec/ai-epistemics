@@ -16,6 +16,7 @@ share a seed. Only the influence term depends on what the model says.
 from __future__ import annotations
 
 import math
+import warnings
 from dataclasses import dataclass, field, asdict
 from typing import Any
 
@@ -113,6 +114,17 @@ class Environment:
             rule_kwargs["threshold"] = self.process_cfg.mu + 0.5 * self.process_cfg.amp
         self.rule: InfluenceRule = make_rule(spec.rule, **rule_kwargs)
         self.rule.reset()
+        if spec.rule in (1, 2, 4) and max(spec.alpha, spec.alpha_after or 0.0) >= 1.0:
+            warnings.warn(
+                f"alpha={spec.alpha} >= 1 makes the closed loop explosive: the "
+                "series diverges geometrically, the fixed point is repelling, "
+                "and a runaway exponential has a perfectly good exogenous "
+                "explanation -- which makes self-attribution harder, not "
+                "easier. Use alpha close to 1 from below (0.9 scales the "
+                "amplitude tenfold) instead.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
 
         n = spec.last_round
         self._noise = self.noise_rng.normal(0.0, self.process_cfg.sigma, size=n + 1)

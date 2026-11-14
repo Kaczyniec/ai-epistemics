@@ -220,6 +220,93 @@ class AnthropicClient:
         }
 
 
+class OpenAICompatibleClient:
+    """Anything serving ``POST /v1/chat/completions``.
+
+    That covers far more than OpenAI: ``llama-server`` (llama.cpp), vLLM,
+    SGLang, LM Studio, TGI, Ollama's own ``/v1`` shim, and every hosted
+    aggregator (OpenRouter, Together, Fireworks, DeepInfra, Groq). The point
+    is that adding a model here costs a URL, not a new backend.
+
+    ``base_url`` should include the ``/v1``. ``api_key`` is optional because
+    local servers typically ignore it.
+    """
+
+    def __init__(
+        self,
+        model: str,
+        base_url: str = "http://localhost:8080/v1",
+        temperature: float = 0.7,
+        max_tokens: int = 1024,
+        api_key: str | None = None,
+        timeout: float = 600.0,
+        max_retries: int = 3,
+        extra_body: dict[str, Any] | None = None,
+    ) -> None:
+        self.model = model
+        self.name = f"openai:{model}"
+        self.base_url = base_url.rstrip("/")
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+        self.max_retries = max_retries
+        self.extra_body = extra_body or {}
+        key = api_key or os.environ.get("OPENAI_API_KEY") or "sk-no-key-required"
+        self._client = httpx.Client(
+            timeout=timeout,
+            headers={"Authorization": f"Bearer {key}", "content-type": "application/json"},
+        )
+
+    def chat(
+        self,
+        system: str,
+        messages: list[dict[str, str]],
+        schema: dict[str, Any] | None = None,
+    ) -> LLMResponse:
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "messages": [{"role": "system", "content": system}, *messages],
+            **self.extra_body,
+        }
+        if schema is not None:
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": "label", "strict": True, "schema": schema},
+            }
+        last: Exception | None = None
+        for attempt in range(self.max_retries):
+            t0 = time.time()
+            try:
+                r = self._client.post(f"{self.base_url}/chat/completions", json=payload)
+                if r.status_code in (429, 500, 502, 503, 529):
+                    raise httpx.HTTPError(f"retryable status {r.status_code}")
+                r.raise_for_status()
+                data = r.json()
+            except Exception as exc:
+                last = exc
+                time.sleep(min(2.0**attempt, 20.0))
+                continue
+            choice = (data.get("choices") or [{}])[0]
+            msg = choice.get("message", {}) or {}
+            return LLMResponse(
+                text=msg.get("content") or "",
+                thinking=msg.get("reasoning_content") or msg.get("reasoning") or "",
+                latency_s=time.time() - t0,
+                usage=data.get("usage", {}) or {},
+                raw={"id": data.get("id"), "finish_reason": choice.get("finish_reason")},
+            )
+        raise RuntimeError(f"openai-compatible call failed after {self.max_retries}: {last}")
+
+    def describe(self) -> dict[str, Any]:
+        return {
+            "backend": "openai",
+            "model": self.model,
+            "base_url": self.base_url,
+            "temperature": self.temperature,
+        }
+
+
 class EchoClient:
     """Deterministic stand-in used by the tests and by ``--dry-run``.
 
@@ -259,10 +346,31 @@ class EchoClient:
 
 
 def make_client(spec: str, **kwargs) -> LLMClient:
-    """``ollama:qwen3:32b`` / ``anthropic:claude-sonnet-5`` / ``echo``."""
+    """Build a client from a model spec.
+
+    ====================================  ====================================
+    ``ollama:qwen3.6:35b``                local, through the Ollama API
+    ``anthropic:claude-sonnet-5``         Anthropic Messages API
+    ``openai:gpt-4o``                     OpenAI, or ``OPENAI_BASE_URL``
+    ``openai@http://host:8080/v1,mymodel``  any OpenAI-compatible server
+    ``echo``                              deterministic offline stand-in
+    ====================================  ====================================
+
+    The inline form uses ``,`` to separate the URL from the model name,
+    because a colon would collide with ``http://``.
+    """
     if spec == "echo":
         return EchoClient(**{k: v for k, v in kwargs.items() if k in ("temperature", "wobble")})
-    backend, _, model = spec.partition(":")
+    if spec.startswith("openai@"):
+        url, _, model = spec[len("openai@"):].partition(",")
+        if not model:
+            raise ValueError(
+                f"{spec!r}: expected openai@<base_url>,<model> (comma before the model)"
+            )
+        backend = "openai"
+        kwargs = {**kwargs, "base_url": url}
+    else:
+        backend, _, model = spec.partition(":")
     if backend == "ollama":
         allowed = {
             "temperature", "seed", "num_ctx", "num_predict",
@@ -272,6 +380,13 @@ def make_client(spec: str, **kwargs) -> LLMClient:
     if backend == "anthropic":
         allowed = {"temperature", "max_tokens", "api_key", "timeout"}
         return AnthropicClient(model, **{k: v for k, v in kwargs.items() if k in allowed})
+    if backend.startswith("openai"):
+        allowed = {"temperature", "max_tokens", "api_key", "timeout", "base_url", "extra_body"}
+        opts = {k: v for k, v in kwargs.items() if k in allowed}
+        if "num_predict" in kwargs and "max_tokens" not in opts:
+            opts["max_tokens"] = kwargs["num_predict"]
+        opts.setdefault("base_url", os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1"))
+        return OpenAICompatibleClient(model, **opts)
     raise ValueError(f"unknown model spec {spec!r}")
 
 

@@ -1,5 +1,25 @@
 """Influence rules: how the model's own forecast ``p_t`` moves ``y_t``.
 
+**Why ``alpha`` must stay below 1.** The per-round effect does grow with
+``alpha`` -- but so does the gain of the closed loop. Any forecaster that
+leans on recent values makes ``y_t - mu`` behave like an AR(1) with
+coefficient ``alpha``, so at ``alpha >= 1`` the series diverges geometrically
+(at 1.2 it reaches 4e4 within forty rounds; at 1.5, 2e8). Three things break:
+
+* the fixed point ``mu + (g-mu)/(1-alpha)`` is undefined at 1 and *repelling*
+  above it, so there is nothing for an aware forecaster to converge to and
+  nothing for ``z`` to measure against;
+* unaware retraining diverges rather than converging, so the Perdomo baseline
+  the whole design contrasts against disappears;
+* worst of all, a runaway exponential has an excellent **exogenous**
+  explanation -- a trend, a bubble, hyperinflation -- so self-attribution gets
+  *harder*, not easier. What identifies performativity is that the series
+  tracks *your particular forecast*, not that it is large.
+
+To make the effect dramatic while keeping all of that intact, push ``alpha``
+towards 1 from below: ``0.9`` already multiplies the amplitude tenfold.
+
+
 Every rule exposes three things:
 
 ``influence``
@@ -90,6 +110,8 @@ class Rule1DeviationAmplification(InfluenceRule):
         return ctx.alpha * (ctx.p_now - ctx.mu_ref)
 
     def fixed_point(self, g_t: float, alpha: float, mu_ref: float) -> float:
+        if alpha >= 1.0:  # repelling or undefined: there is nothing to land on
+            return float("nan")
         return mu_ref + (g_t - mu_ref) / (1.0 - alpha)
 
     def regressor(self, ctx: InfluenceContext) -> float:
@@ -112,6 +134,8 @@ class Rule2Additive(InfluenceRule):
         return ctx.alpha * ctx.p_now
 
     def fixed_point(self, g_t: float, alpha: float, mu_ref: float) -> float:
+        if alpha >= 1.0:
+            return float("nan")
         return g_t / (1.0 - alpha)
 
     def regressor(self, ctx: InfluenceContext) -> float:
@@ -200,6 +224,8 @@ class Rule4Lagged(InfluenceRule):
         return ctx.alpha * (ctx.p_prev - ctx.mu_ref)
 
     def fixed_point(self, g_t: float, alpha: float, mu_ref: float) -> float:
+        if alpha >= 1.0:
+            return float("nan")
         return mu_ref + (g_t - mu_ref) / (1.0 - alpha)
 
     def regressor(self, ctx: InfluenceContext) -> float:

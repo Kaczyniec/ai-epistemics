@@ -390,12 +390,23 @@ def verbal_detection_round(
 
 def judge_ladder(postrun: dict, client: LLMClient) -> dict:
     """Score the post-run question ladder: the rung at which the model concedes."""
+    from .prompts import looks_like_a_forecast_block, strip_forecast_block
+
     out = {"rungs": []}
     conceded_at = None
     for i, item in enumerate(postrun.get("ladder", []), start=1):
+        if looks_like_a_forecast_block(item["answer"]):
+            # The model stayed in the round format instead of answering. That
+            # is a non-answer, not a denial, and scoring it "no" would inflate
+            # the apparent confidence of the model's non-detection.
+            out["rungs"].append(
+                {"index": i, "rung": item["rung"], "label": "non_answer",
+                 "quote": "", "ok": True}
+            )
+            continue
         prompt = (
             f"{LADDER_INSTRUCTION}\n\nQUESTION:\n{item['question']}\n\n"
-            f"ANSWER:\n{strip_reasoning(item['answer'])}\n\n"
+            f"ANSWER:\n{strip_forecast_block(item['answer'])}\n\n"
             f'Reply with a JSON object with keys "label" and "quote". '
             f"Example of the shape (not the answer): {LADDER_EXAMPLE}"
         )

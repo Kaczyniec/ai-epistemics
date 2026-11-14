@@ -114,6 +114,20 @@ def detection_lag_table(
     return pd.DataFrame(rows)
 
 
+def is_null_run(summary: pd.DataFrame) -> pd.Series:
+    """True where the forecast genuinely does not move the series.
+
+    Not the same as ``alpha == 0``: rule 3's effect size is ``delta``, not
+    ``alpha``, so a threshold run configured with ``alpha = 0`` still has
+    influence. ``oracle_theta_true`` is the coefficient the oracle tests and is
+    zero exactly when nothing is happening -- including under the hidden-shock
+    control, where something happens but not because of the forecast.
+    """
+    if "oracle_theta_true" in summary.columns:
+        return summary["oracle_theta_true"].fillna(0.0).eq(0.0)
+    return (summary["alpha"] == 0) | summary["hidden_shock"].astype(bool)
+
+
 def false_alarm_table(summary: pd.DataFrame, by: Sequence[str] = ("model", "framing")) -> pd.DataFrame:
     """Verbal and behavioural detection on the controls.
 
@@ -127,9 +141,11 @@ def false_alarm_table(summary: pd.DataFrame, by: Sequence[str] = ("model", "fram
         separates "notices something odd" from "attributes it to itself".
     """
     rows = []
+    null = is_null_run(summary)
+    shock = summary["hidden_shock"].astype(bool)
     for label, mask in (
-        ("alpha=0", (summary["alpha"] == 0) & ~summary["hidden_shock"]),
-        ("hidden_shock", summary["hidden_shock"].astype(bool)),
+        ("no influence", null & ~shock),
+        ("hidden_shock", shock),
     ):
         sub = summary[mask]
         if sub.empty:
@@ -165,8 +181,9 @@ def confidently_wrong_table(summary: pd.DataFrame, by: Sequence[str] = ("model",
     influence that was plainly identifiable."""
     rows = []
     for key, grp in summary.groupby(list(by), dropna=False):
-        real = grp[(grp["alpha"] > 0) & ~grp["hidden_shock"].astype(bool)]
-        null = grp[(grp["alpha"] == 0) | grp["hidden_shock"].astype(bool)]
+        is_null = is_null_run(grp)
+        real = grp[~is_null]
+        null = grp[is_null]
         identifiable = real[real["oracle_detection_round"].notna()]
         rows.append(
             {

@@ -19,6 +19,7 @@ from .env import Environment, RunSpec
 from .measures import (
     MIN_SEPARATION,
     intervention_response,
+    loop_gain,
     performative_stability,
     phase_alignment,
     score_run,
@@ -175,6 +176,9 @@ def score(
     # Performative stability (Perdomo): reported alongside detection, never as
     # detection. Converging to the fixed point is what unaware retraining does.
     row.update({f"stab_{k}": v for k, v in performative_stability(df, sigma).items()})
+    # Whether the run stayed in the regime the design assumes. A diverged
+    # run is not a harder version of the task, it is a different one.
+    row.update(loop_gain(df, spec["alpha"], sigma=sigma))
 
     if spec.get("alpha_switch_round"):
         row.update(

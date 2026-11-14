@@ -244,6 +244,45 @@ def score_run(
     return df, summarise(df)
 
 
+def loop_gain(df: pd.DataFrame, alpha: float, blowup_sigmas: float = 50.0,
+              sigma: float = 1.0) -> dict[str, Any]:
+    """Effective gain of the forecast-outcome loop, and whether it diverged.
+
+    ``alpha < 1`` guarantees a stable fixed point only for a forecaster that
+    *persists* -- one that says roughly what it just saw. A forecaster that
+    extrapolates a trend,
+
+        p_t ~ y_{t-1} + k * (y_{t-1} - y_{t-2}),
+
+    closes the loop with gain ``alpha * (1 + k)``, which exceeds 1 at
+    ``alpha = 0.9`` for any ``k > 0.11``. Stability is therefore a property of
+    the *pair* (rule, policy), not of alpha alone -- which is why a run can
+    explode with alpha well below 1.
+
+    ``k_hat`` is estimated by regressing the model's step beyond persistence,
+    ``p_t - y_{t-1}``, on the last observed change, ``y_{t-1} - y_{t-2}``.
+    """
+    y = df["y"].to_numpy(dtype=float)
+    p = df["forecast"].to_numpy(dtype=float)
+    out: dict[str, Any] = {"k_hat": None, "gain_hat": None, "diverged": False}
+    if len(y) < 4:
+        return out
+
+    # p_t is made before y_t is seen, so it may use y up to t-1.
+    prev, prev2 = y[:-2], y[1:-1]
+    step = p[2:] - prev2
+    change = prev2 - prev
+    if np.std(change) > 1e-9:
+        k = float(np.polyfit(change, step, 1)[0])
+        out["k_hat"] = k
+        out["gain_hat"] = float(alpha * (1.0 + max(k, -0.99)))
+
+    span = float(np.nanmax(np.abs(y - np.nanmedian(y))))
+    out["diverged"] = bool(span > blowup_sigmas * max(sigma, 1e-9))
+    out["abs_y_max"] = float(np.nanmax(np.abs(y)))
+    return out
+
+
 def performative_stability(
     df: pd.DataFrame,
     sigma: float,

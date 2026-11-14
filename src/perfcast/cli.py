@@ -79,16 +79,18 @@ def cmd_selftest(args) -> int:
     return run_selftest(verbose=True)
 
 
-def _run_specs(specs: list[RunSpec], args) -> int:
+def _run_specs(specs: list[RunSpec], args, model: str | None = None) -> int:
+    model = model or args.model
     out_root = Path(args.out)
-    client = make_client(args.model, **_client_kwargs(args))
+    client = make_client(model, **_client_kwargs(args))
     shadow = None
     if args.shadow:
-        shadow = make_client(args.shadow_model or args.model, **_client_kwargs(args))
+        shadow = make_client(args.shadow_model or model, **_client_kwargs(args))
 
     for i, spec in enumerate(specs, start=1):
-        print(f"\n[{i}/{len(specs)}] rule {spec.rule} alpha {spec.alpha:g} "
-              f"framing {spec.framing} seed {spec.seed}", flush=True)
+        print(f"\n[{i}/{len(specs)}] {model}  rule {spec.rule} "
+              f"alpha {spec.alpha:g} framing {spec.framing} seed {spec.seed}",
+              flush=True)
         result = run_episode(
             spec,
             client,
@@ -96,7 +98,7 @@ def _run_specs(specs: list[RunSpec], args) -> int:
             shadow_every=args.shadow_every,
             shadow_n=args.shadow_n,
             postrun=not args.no_postrun,
-            on_round=_progress(spec, args.model) if args.verbose else None,
+            on_round=_progress(spec, model) if args.verbose else None,
             tag=args.tag,
         )
         path = result.save(out_root)
@@ -151,6 +153,40 @@ def cmd_grid(args) -> int:
     return _run_specs(specs, args)
 
 
+def cmd_sweep(args) -> int:
+    """The same conditions across several models, one process.
+
+    Models run in sequence rather than in parallel: a 20-30 GB model already
+    occupies most of a GPU, and two of them competing makes both slower than
+    running them one after the other.
+    """
+    specs = grid_mod.build_grid(
+        rules=tuple(args.rules),
+        alphas=tuple(args.alphas),
+        framings=tuple(args.framings),
+        seeds=tuple(args.seeds),
+        horizon=args.horizon,
+        warmup=args.warmup,
+    )
+    if args.controls:
+        specs = grid_mod.with_controls(specs)
+    print(f"{len(args.models)} models x {len(specs)} conditions "
+          f"= {len(args.models) * len(specs)} runs")
+    if args.dry_run:
+        for m in args.models:
+            for sp_ in specs:
+                print(f"  {m}  rule {sp_.rule} alpha {sp_.alpha:g} "
+                      f"{sp_.framing} seed {sp_.seed} shock={sp_.hidden_shock}")
+        return 0
+    for model in args.models:
+        print(f"\n{'#' * 70}\n# {model}\n{'#' * 70}", flush=True)
+        try:
+            _run_specs(specs, args, model=model)
+        except Exception as exc:  # one bad model must not sink the sweep
+            print(f"  !! {model} failed: {type(exc).__name__}: {exc}", flush=True)
+    return 0
+
+
 def cmd_judge(args) -> int:
     # think=False matters here: a reasoning model left to its own devices
     # spends the whole budget thinking inside the content channel and
@@ -189,6 +225,35 @@ def cmd_judge(args) -> int:
                 frame, Path(args.hand_labels) / f"{run_dir.name}.csv",
                 run_id=result["run_id"], sample=args.hand_label_sample,
             )
+    return 0
+
+
+def cmd_reprobe(args) -> int:
+    """Re-ask the post-run probes on saved runs, in their original context."""
+    from .runner import reprobe
+
+    root = Path(args.runs)
+    dirs = [p for p in sorted(root.iterdir()) if (p / "run.json").exists()]
+    if args.only:
+        dirs = [p for p in dirs if args.only in p.name]
+    for i, run_dir in enumerate(dirs, start=1):
+        result = scoring.load_run(run_dir)
+        model = args.model or f"{result['model']['backend']}:{result['model']['model']}"
+        print(f"[{i}/{len(dirs)}] {run_dir.name}  ({model})", flush=True)
+        client = make_client(model, **_client_kwargs(args))
+        try:
+            post = reprobe(result, client)
+        except Exception as exc:
+            print(f"    !! {type(exc).__name__}: {exc}", flush=True)
+            continue
+        (run_dir / "run.json").write_text(json.dumps(result, indent=2, default=str))
+        with (run_dir / "transcript.jsonl").open("w") as fh:
+            for item in result["transcript"]:
+                fh.write(json.dumps(item, default=str) + "\n")
+        (run_dir / "ladder.json").unlink(missing_ok=True)  # must be re-judged
+        rungs = " | ".join(r["rung"] + ": " + r["answer"].strip().replace("\n", " ")[:60]
+                           for r in post["ladder"])
+        print(f"    {rungs}", flush=True)
     return 0
 
 
@@ -361,6 +426,26 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--alpha-after", type=float, default=0.2)
     sp.add_argument("--dry-run", action="store_true")
     sp.set_defaults(func=cmd_grid)
+
+    sp = sub.add_parser("sweep", help="the same conditions across several models")
+    add_model_args(sp)
+    sp.add_argument("--models", nargs="+", required=True)
+    sp.add_argument("--rules", type=int, nargs="+", default=[1])
+    sp.add_argument("--alphas", type=float, nargs="+", default=[0.5])
+    sp.add_argument("--framings", nargs="+", default=["market"])
+    sp.add_argument("--seeds", type=int, nargs="+", default=[0])
+    sp.add_argument("--warmup", type=int, default=20)
+    sp.add_argument("--horizon", type=int, default=40)
+    sp.add_argument("--controls", action="store_true")
+    sp.add_argument("--dry-run", action="store_true")
+    sp.set_defaults(func=cmd_sweep)
+
+    sp = sub.add_parser("reprobe", help="re-ask the post-run probes on saved runs")
+    add_model_args(sp)
+    sp.set_defaults(model=None)
+    sp.add_argument("--runs", default=str(DEFAULT_RUNS))
+    sp.add_argument("--only", default=None)
+    sp.set_defaults(func=cmd_reprobe)
 
     sp = sub.add_parser("judge", help="label the verbal channel")
     sp.add_argument("--runs", default=str(DEFAULT_RUNS))

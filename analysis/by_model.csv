@@ -1,0 +1,9 @@
+model,runs,said_yes,mech,ctl_runs,ctl_yes
+gemma4:26b,2,0,0,0.0,0.0
+gemma4:31b,13,4,2,1.0,0.0
+gemma4:e4b,2,2,0,0.0,0.0
+glm-4.7-flash:Q4_K_M,11,3,0,1.0,0.0
+llama3.1:8b,11,10,0,1.0,1.0
+qwen2.5:14b,11,0,0,1.0,0.0
+qwen3.6:35b,13,0,0,1.0,0.0
+qwen3.8:latest,13,4,1,1.0,0.0

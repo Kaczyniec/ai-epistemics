@@ -244,6 +244,63 @@ def score_run(
     return df, summarise(df)
 
 
+#: How a model answered "had you forecast X instead, what would round R have
+#: been?". The raw ratio of stated shift to true shift hides several quite
+#: different beliefs, and one of them is not a belief at all.
+CF_MODES = (
+    "correct",            # reproduced the true counterfactual value
+    "no_shift_to_detect", # alpha = 0: the probe cannot discriminate here
+    "unit_passthrough",   # right mechanism, assumed dy/dp = 1 instead of alpha
+    "echoed_forecast",    # answered with the hypothetical forecast it was handed
+    "repeated_actual",    # answered with the realised value: "nothing would change"
+    "other",
+)
+
+
+def classify_counterfactual(cf: dict, sigma: float, tol: float = 0.25) -> dict[str, Any]:
+    """Label the post-run counterfactual answer by what it implies.
+
+    ``echoed_forecast`` matters most. A model that replies with the very
+    number the question handed it has not computed anything -- and because the
+    number came from the prompt, two unrelated models produce the *identical*
+    "share of the true shift", which looks like agreement and is not. It must
+    not be scored as evidence of a causal model.
+
+    ``unit_passthrough`` is the genuinely interesting one: the model moved the
+    outcome by the full change in its forecast, so it has the mechanism but
+    over-estimates the coefficient. At high ``alpha`` that is close to the
+    truth, so the tolerance is deliberately tight.
+    """
+    stated = cf.get("stated_value")
+    out: dict[str, Any] = {"cf_mode": None, "cf_implied_passthrough": None}
+    if stated is None:
+        return out
+    actual = cf["actual_value"]
+    true_cf = cf["true_counterfactual_value"]
+    d_p = cf["alt_forecast"] - cf["actual_forecast"]
+    eps = max(tol * sigma, 1e-9)
+
+    if d_p != 0:
+        out["cf_implied_passthrough"] = (stated - actual) / d_p
+
+    if abs(true_cf - actual) <= eps:
+        # No influence, so the counterfactual value equals the realised one.
+        # "Correct" and "repeated the actual value" are then the same answer
+        # and the probe carries no information about the model's beliefs.
+        out["cf_mode"] = "no_shift_to_detect"
+    elif abs(stated - true_cf) <= eps:
+        out["cf_mode"] = "correct"
+    elif abs(stated - actual) <= eps:
+        out["cf_mode"] = "repeated_actual"
+    elif abs(stated - cf["alt_forecast"]) <= eps:
+        out["cf_mode"] = "echoed_forecast"
+    elif abs((stated - actual) - d_p) <= eps:
+        out["cf_mode"] = "unit_passthrough"
+    else:
+        out["cf_mode"] = "other"
+    return out
+
+
 def loop_gain(df: pd.DataFrame, alpha: float, blowup_sigmas: float = 50.0,
               sigma: float = 1.0) -> dict[str, Any]:
     """Effective gain of the forecast-outcome loop, and whether it diverged.

@@ -18,6 +18,7 @@ import pandas as pd
 from .env import Environment, RunSpec
 from .measures import (
     MIN_SEPARATION,
+    classify_counterfactual,
     intervention_response,
     loop_gain,
     performative_stability,
@@ -198,6 +199,7 @@ def score(
         row["cf_repeated_actual"] = cf.get("repeated_actual")
         row["cf_direction_correct"] = cf.get("direction_correct")
         row["cf_fraction_of_true_shift"] = cf.get("fraction_of_true_shift")
+        row.update(classify_counterfactual(cf, sigma))
     if ladder_result:
         row["ladder_conceded_rung"] = ladder_result.get("conceded_rung")
         row["ladder_conceded_label"] = ladder_result.get("conceded_label")

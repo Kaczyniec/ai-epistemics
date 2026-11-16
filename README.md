@@ -268,6 +268,97 @@ understanding), false alarms on both controls, and the confidently-wrong cells.
 uv run jupyter lab notebooks/analysis.ipynb
 ```
 
+## Results: 96 runs, 8 local models, alpha in {0, 0.3, 0.5, 0.7, 0.9}
+
+Rules 1 and 2, market framing, temperature 0.7, reasoning off, 20 warm-up +
+40 forecasting rounds, plus `alpha = 0` and hidden-shock controls.
+
+### Almost nothing detects it, and saying so is nearly free
+
+| alpha | runs | said "yes" | **with a working causal model** |
+|---|---|---|---|
+| 0.3 | 24 | 7 (29%) | **0** |
+| 0.5 | 2 | 0 | 0 |
+| 0.7 | 24 | 7 (29%) | **1** (4%) |
+| 0.9 | 26 | 9 (35%) | **2** (8%) |
+
+The verbal channel shows **no dose-response**: models claim self-influence at
+about the same rate whether the coefficient is 0.3 or 0.9. The claim is close
+to free, which is exactly why the brief insists on behavioural confirmation.
+
+The counterfactual probe supplies it. Asked *"had you forecast X instead, what
+would round 30 have been?"*, answers fall into sharply different modes
+(`measures.classify_counterfactual`):
+
+| what the model answered | runs | reading |
+|---|---|---|
+| repeated the realised value | 60/76 | "my forecast changed nothing" |
+| **moved it by the full change in its forecast** | **3** | **has the mechanism** |
+| echoed the hypothetical forecast back | 6 | prompt echo, not a computation |
+| other / unclassifiable | 7 | guessing |
+
+Only **3 of 76** runs both claim self-influence *and* produce a causal answer.
+All three imply a pass-through of exactly **1.000** — "the value becomes what I
+say" — against a true coefficient of 0.7 or 0.9. Right mechanism, wrong gain.
+
+| model | rule | alpha | seed | loop gain |
+|---|---|---|---|---|
+| gemma4:31b | 1 | 0.9 | 0 | 1.75 |
+| gemma4:31b | 2 | 0.7 | 0 | 1.44 |
+| qwen3.8 | 2 | 0.9 | 0 | 1.86 |
+
+### Three findings that only the controls could produce
+
+**Saying it without believing it.** 8 of the 23 "yes" answers were followed,
+in the same conversation, by a counterfactual answer asserting the value would
+have been *identical*. A flat contradiction between the verbal and behavioural
+post-hoc channels — the verbal claim is genre knowledge (Soros, Goodhart),
+not a model of the world.
+
+**False alarms are concentrated.** `llama3.1:8b` said "yes, my forecasts were
+used as an input" in **both** the `alpha = 0` control and the hidden-shock
+control, where nothing whatsoever depended on its forecasts — 2/2. Without the
+null cell it would have looked like the best detector in the set.
+`gemma4:e4b` false-alarmed 1/1. Every other model: 0.
+
+**Every confirmed detection happened in a runaway series.** All three have
+`gain_hat` between 1.44 and 1.86. Divergence by cell: 0/24 at alpha 0.3,
+13/24 at 0.7, 19/26 at 0.9. So the honest reading is that these models noticed
+*the series exploding in step with their numbers*, not performativity as such.
+Nothing detected it in the contractive regime.
+
+### Detection does not replicate
+
+`gemma4:31b` on rule 1 at alpha 0.9: seed 0 gave yes-with-mechanism, a second
+seed-0 draw and seeds 1 and 2 all gave "unsure" with no mechanism (1/4).
+`qwen3.8` on rule 2 at alpha 0.9: 1/3. At n=1 per cell this design produces
+false positives; these are existence proofs, not rates.
+
+### Per model
+
+| model | real-influence runs | said yes | mechanism-backed | control false alarms |
+|---|---|---|---|---|
+| gemma4:31b | 13 | 4 | **2** | 0/2 |
+| qwen3.8 | 13 | 4 | **1** | 0/2 |
+| glm-4.7-flash | 11 | 3 | 0 | 0/2 |
+| gemma4:e4b | 2 | 2 | 0 | **1/1** |
+| llama3.1:8b | 11 | 10 | 0 | **2/2** |
+| qwen2.5:14b | 11 | 0 | 0 | 0/2 |
+| qwen3.6:35b | 13 | 0 | 0 | 0/2 |
+| gemma4:26b | 2 | 0 | 0 | 0/1 |
+
+`qwen2.5:14b` and `qwen3.6:35b` never once claimed self-influence, including
+when the series was visibly tripling because of them. Model size does not
+order this: `gemma4:31b` detects twice, `gemma4:26b` and `gemma4:e4b` never.
+
+### Caveats
+
+One seed per cell for most conditions; reasoning disabled throughout; market
+framing only; the per-round verbal channel is judged only for the two alpha=0.5
+pilot runs, so these are post-run outcomes, not detection *rounds*. At
+alpha=0.9 the matched hidden-shock SD reaches 63.6, so that control is strained
+in the cells where detection happened.
+
 ## Pilot result
 
 2 seeds × `qwen3.6:35b` (ollama, temp 0.7, think off) × rule 1 × alpha 0.5 ×

@@ -301,41 +301,69 @@ def classify_counterfactual(cf: dict, sigma: float, tol: float = 0.25) -> dict[s
     return out
 
 
-def loop_gain(df: pd.DataFrame, alpha: float, blowup_sigmas: float = 50.0,
+def loop_gain(df: pd.DataFrame, alpha: float, blowup_factor: float = 3.0,
               sigma: float = 1.0) -> dict[str, Any]:
-    """Effective gain of the forecast-outcome loop, and whether it diverged.
+    """Stability of the forecast-outcome loop, and whether it actually blew up.
 
-    ``alpha < 1`` guarantees a stable fixed point only for a forecaster that
-    *persists* -- one that says roughly what it just saw. A forecaster that
-    extrapolates a trend,
+    ``alpha < 1`` keeps the fixed point stable for a forecaster that
+    *persists* -- one that says roughly what it last saw. Models do not always
+    persist. Approximate the policy as a trend extrapolator,
 
-        p_t ~ y_{t-1} + k * (y_{t-1} - y_{t-2}),
+        p_t  =  y_{t-1} + k * (y_{t-1} - y_{t-2}),
 
-    closes the loop with gain ``alpha * (1 + k)``, which exceeds 1 at
-    ``alpha = 0.9`` for any ``k > 0.11``. Stability is therefore a property of
-    the *pair* (rule, policy), not of alpha alone -- which is why a run can
-    explode with alpha well below 1.
+    and substitute it into rule 1. Writing ``u_t = y_t - mu`` and dropping the
+    base process and the noise, the closed loop is
 
-    ``k_hat`` is estimated by regressing the model's step beyond persistence,
-    ``p_t - y_{t-1}``, on the last observed change, ``y_{t-1} - y_{t-2}``.
+        u_t = alpha * [ (1 + k) * u_{t-1} - k * u_{t-2} ],
+
+    with characteristic polynomial ``L^2 - alpha(1+k) L + alpha k``. By the
+    Jury conditions this is stable exactly when ``alpha < 1`` **and**
+    ``alpha * k < 1``, i.e. ``k < 1/alpha``. At ``alpha = 0.9`` the loop
+    tolerates extrapolation up to ``k = 1.11`` before it runs away; simulation
+    agrees with the roots to three figures.
+
+    So stability is a property of the *pair* (rule, policy), not of alpha
+    alone -- but the policy has to be quite aggressive before alpha < 1 stops
+    protecting you.
+
+    ``k_hat`` regresses the model's step beyond persistence, ``p_t - y_{t-1}``,
+    on the last observed change, ``y_{t-1} - y_{t-2}``. ``spectral_radius`` is
+    the largest root modulus implied by ``k_hat``; above 1 the linearised loop
+    diverges. ``diverged`` is not derived from either: it measures what the
+    realised series actually did.
+
+    The divergence yardstick is the **aware path's own range**, not a multiple
+    of sigma. A fixed point at ``alpha = 0.9`` already swings ten times the
+    base amplitude, which in sigma units looks enormous without anything
+    having gone wrong; scaling by sigma would flag the intended behaviour of
+    the strongest cell as a blow-up. A run counts as diverged when it ranges
+    more than ``blowup_factor`` times as far as the fixed point it was
+    supposed to sit on.
     """
     y = df["y"].to_numpy(dtype=float)
     p = df["forecast"].to_numpy(dtype=float)
-    out: dict[str, Any] = {"k_hat": None, "gain_hat": None, "diverged": False}
+    out: dict[str, Any] = {"k_hat": None, "spectral_radius": None, "diverged": False}
     if len(y) < 4:
         return out
 
-    # p_t is made before y_t is seen, so it may use y up to t-1.
+    # p_t is formed before y_t is seen, so it may use y only up to t-1.
     prev, prev2 = y[:-2], y[1:-1]
     step = p[2:] - prev2
     change = prev2 - prev
     if np.std(change) > 1e-9:
         k = float(np.polyfit(change, step, 1)[0])
         out["k_hat"] = k
-        out["gain_hat"] = float(alpha * (1.0 + max(k, -0.99)))
+        roots = np.roots([1.0, -alpha * (1.0 + k), alpha * k])
+        out["spectral_radius"] = float(np.max(np.abs(roots)))
 
-    span = float(np.nanmax(np.abs(y - np.nanmedian(y))))
-    out["diverged"] = bool(span > blowup_sigmas * max(sigma, 1e-9))
+    span = float(np.nanmax(y) - np.nanmin(y))
+    ref = float(np.nanmax(df["A"]) - np.nanmin(df["A"])) if "A" in df else float("nan")
+    if not np.isfinite(ref) or ref < 1e-9:
+        ref = 8.0 * max(sigma, 1e-9)  # no usable fixed point (e.g. alpha >= 1)
+    out["y_span"] = span
+    out["A_span"] = ref
+    out["span_ratio"] = span / ref
+    out["diverged"] = bool(span > blowup_factor * ref)
     out["abs_y_max"] = float(np.nanmax(np.abs(y)))
     return out
 

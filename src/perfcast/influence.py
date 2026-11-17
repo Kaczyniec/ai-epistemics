@@ -1,10 +1,11 @@
 """Influence rules: how the model's own forecast ``p_t`` moves ``y_t``.
 
 **Why ``alpha`` must stay below 1.** The per-round effect does grow with
-``alpha`` -- but so does the gain of the closed loop. Any forecaster that
-leans on recent values makes ``y_t - mu`` behave like an AR(1) with
-coefficient ``alpha``, so at ``alpha >= 1`` the series diverges geometrically
-(at 1.2 it reaches 4e4 within forty rounds; at 1.5, 2e8). Three things break:
+``alpha``, but so does the gain of the closed loop. A forecaster that simply
+persists -- says roughly what it last saw -- makes ``y_t - mu`` behave like an
+AR(1) with coefficient ``alpha``, so at ``alpha >= 1`` the series diverges
+geometrically (at 1.2 it reaches 4e4 within forty rounds; at 1.5, 2e8). Three
+things break:
 
 * the fixed point ``mu + (g-mu)/(1-alpha)`` is undefined at 1 and *repelling*
   above it, so there is nothing for an aware forecaster to converge to and

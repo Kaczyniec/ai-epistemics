@@ -301,11 +301,11 @@ Only **3 of 76** runs both claim self-influence *and* produce a causal answer.
 All three imply a pass-through of exactly **1.000** — "the value becomes what I
 say" — against a true coefficient of 0.7 or 0.9. Right mechanism, wrong gain.
 
-| model | rule | alpha | seed | loop gain |
-|---|---|---|---|---|
-| gemma4:31b | 1 | 0.9 | 0 | 1.75 |
-| gemma4:31b | 2 | 0.7 | 0 | 1.44 |
-| qwen3.8 | 2 | 0.9 | 0 | 1.86 |
+| model | rule | alpha | seed | spectral radius | ran away? |
+|---|---|---|---|---|---|
+| gemma4:31b | 1 | 0.9 | 0 | 0.92 | no |
+| gemma4:31b | 2 | 0.7 | 0 | 0.86 | no |
+| qwen3.8 | 2 | 0.9 | 0 | 0.98 | yes |
 
 ### Three findings that only the controls could produce
 
@@ -321,11 +321,17 @@ control, where nothing whatsoever depended on its forecasts — 2/2. Without the
 null cell it would have looked like the best detector in the set.
 `gemma4:e4b` false-alarmed 1/1. Every other model: 0.
 
-**Every confirmed detection happened in a runaway series.** All three have
-`gain_hat` between 1.44 and 1.86. Divergence by cell: 0/24 at alpha 0.3,
-13/24 at 0.7, 19/26 at 0.9. So the honest reading is that these models noticed
-*the series exploding in step with their numbers*, not performativity as such.
-Nothing detected it in the contractive regime.
+**Two of the three detections happened in well-behaved runs.** Measuring
+divergence against the fixed point's own range (not against sigma — see
+METHODS 5.4), only `qwen3.8`'s run ran away; `gemma4:31b` detected twice in
+series that stayed within 2-3x the intended range, one of them at alpha 0.7.
+So detection is not merely "noticed the series exploding". Divergence
+overall: 0/24 at alpha 0.3, 7/24 at 0.7, 10/26 at 0.9, and 15 of the 17
+diverging runs are rule 2, which compounds the level.
+
+Only four runs had a genuinely unstable *policy* (spectral radius > 1):
+`llama3.1:8b` twice, `glm-4.7-flash` once with a fitted extrapolation
+coefficient of 19.9, and `qwen2.5:14b` once.
 
 ### Detection does not replicate
 
@@ -400,11 +406,13 @@ approaching it, if at all, the way retraining does.
 
 Two seeds is a pilot, not a result. The grid is what settles it.
 
-## Pre-registration
+## Documentation
 
-The detection definitions and the judge rubric are the constants at the top of
-`measures.py` and `judge.py`. Fix them before running the grid, not after
-looking at it.
+- **[METHODS.md](METHODS.md)** — theory, every derivation, definitions of all
+  terms, what was done step by step, and a log of the seven corrections made
+  after seeing data.
+- **[PREREGISTRATION.md](PREREGISTRATION.md)** — the frozen specification:
+  hypotheses, outcome definitions, constants, analysis plan.
 
 ## Layout
 
